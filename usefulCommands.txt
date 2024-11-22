@@ -1,0 +1,18 @@
+
+# chapter 1
+
+## run puma project
+pumasim
+
+## build project with cmake
+cd 1/
+mkdir build
+cd build
+cmake ..
+make
+
+
+# chapter 2
+
+## compile test file
+g++ forwardkinematics.cpp forwardkinematics.hpp -o forwardkinematics -std=c++98 -pedantic
