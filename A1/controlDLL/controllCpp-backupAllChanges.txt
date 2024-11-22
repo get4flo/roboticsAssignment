@@ -44,6 +44,26 @@ void PreprocessControl(GlobalVariables& gv)
     PrVector3 g123 = PrVector3(0,0,0);
 
     // Compute g123 here!
+    double r1 = R2;
+    double c1 = cos(q1);
+    double g = GRAVITY;
+    double m1 = M2;
+    
+    double l1 = L2;
+    double r2 = 0.189738;
+    //account for difference in frame orientation at link 3
+    double c12 = cos(q1 + q2 - M_PI/2);
+    double m2 = M3 + M4 + M5;
+    
+    double l2 = L3;
+    double r3 = R6;
+    double c123 = cos(q1 + q2 + q3 - M_PI/2);
+    double m3 = M6;
+    
+    
+    g123[0] = -(r1*c1*m1 + (l1*c1+r2*c12)*m2 + (l1*c1+l2*c12+r3*c123)*m3)*g;
+    g123[1] = -(r2*c12*m2 + (l2*c12+r3*c123)*m3)*g;
+    g123[2] = -r3*c123*m3*g;
 
     // maps the torques to the right joint indices depending on the current mode:
     if (gv.dof == 3) {
@@ -107,9 +127,61 @@ void initJgotoControl(GlobalVariables& gv)
   // Control Initialization Code Here
 }
 
+struct CubicSpline {
+	double t0 , tf;
+	PrVector a0 , a1 , a2 , a3;
+	bool tf_cal, spline_calc, spline_exec;
+};
+CubicSpline spline;
+
+// Compute total trajectory length
+double computeTf ( GlobalVariables & gv)
+{
+	double max_duration = 0.0;
+	
+	for(int i=0; i<gv.dof; i++){
+	
+		double delta_q = abs(gv.qd[i] - gv.q[i]);
+		//velocity constraint -> assuma max_v at tf/2
+		double time_limit_v = 3 * delta_q / (2 * gv.dqmax[i]);
+	
+		//acceleration constraint -> assum max_acc at t=0
+		double time_limit_acc = sqrt(6 * delta_q / gv.ddqmax[i]);
+		
+		double cur_max = max(time_limit_v, time_limit_acc);
+		
+		max_duration = max(cur_max, max_duration);
+	}
+	spline.tf_cal = true;
+	
+	return max_duration;
+}
+
 void initNjtrackControl(GlobalVariables& gv) 
 {
-  // Control Initialization Code Here
+  //calc gv.dq[0]
+  spline.t0 = gv.curTime;
+  spline.tf = gv.curTime + computeTf(gv);
+  
+  int dof = 3;
+  spline.a0 = PrVector(dof);
+  spline.a1 = PrVector(dof);
+  spline.a2 = PrVector(dof);
+  spline.a3 = PrVector(dof);
+  //int entries[3] = {1, 2, 4};
+  
+  
+  for(int i=0; i<dof; i++){
+  	spline.a0[i] = gv.q[i];
+  	spline.a2[i] = (3 / pow(spline.tf, 2.0)) * (gv.qd[i] - gv.q[i]);
+  	spline.a3[i] = (2 / pow(spline.tf, 3.0)) * (gv.qd[i] - gv.q[i]);
+  }
+  
+  spline.spline_calc = true;
+  /*a0 = gv.q[0]
+  a2 = (3 / pow(spline.tf, 2.0)) * (gv.qd[0] - gv.q[0])
+  a3 = (2 / pow(spline.tf, 3.0)) * (gv.qd[0] - gv.q[0])*/
+  
 }
 
 void initJtrackControl(GlobalVariables& gv) 
@@ -193,10 +265,19 @@ void noControl(GlobalVariables& gv)
 
 void floatControl(GlobalVariables& gv)
 {
-  // gv.tau = ?
+  //gv.tau[0] = -30;
   // this only works on the real robot unless the function is changed to use cout
   // the handed in solution must not contain any printouts
   // PrintDebug(gv);
+  if(gv.dof == 3){
+    gv.tau[0] = -gv.G[0];
+    gv.tau[1] = -gv.G[1];
+    gv.tau[2] = -gv.G[2];
+  } else if (gv.dof == 6) {
+    gv.tau[1] = -gv.G[1];
+    gv.tau[2] = -gv.G[2];
+    gv.tau[4] = -gv.G[4];
+  }
 }
 
 void openControl(GlobalVariables& gv)
@@ -216,7 +297,9 @@ void jholdControl(GlobalVariables& gv)
 
 void njmoveControl(GlobalVariables& gv)
 {
-  floatControl(gv);  // Remove this line when you implement this controller
+  gv.tau[0] = gv.kp[0] * (gv.qd[0] - gv.q[0]);
+  gv.tau[1] = gv.kp[1] * (gv.qd[1] - gv.q[1]);
+  gv.tau[2] = gv.kp[2] * (gv.qd[2] - gv.q[2]);
 }
 
 void jmoveControl(GlobalVariables& gv)
@@ -226,17 +309,21 @@ void jmoveControl(GlobalVariables& gv)
 
 void njgotoControl(GlobalVariables& gv) 
 {
-  floatControl(gv);  // Remove this line when you implement this controller
+  gv.tau[0] = gv.kp[0] * (gv.qd[0] - gv.q[0]) - gv.G[0];
+  gv.tau[1] = gv.kp[1] * (gv.qd[1] - gv.q[1]) - gv.G[1];
+  gv.tau[2] = gv.kp[2] * (gv.qd[2] - gv.q[2]) - gv.G[2]; 
 }
 
 void jgotoControl(GlobalVariables& gv) 
 {
-  floatControl(gv);  // Remove this line when you implement this controller
+  gv.tau[0] = -gv.kp[0] * (gv.q[0] - gv.qd[0]) - gv.kv[0] * gv.dq[0] - gv.G[0];
+  gv.tau[1] = -gv.kp[1] * (gv.q[1] - gv.qd[1]) - gv.kv[1] * gv.dq[1] - gv.G[1];
+  gv.tau[2] = -gv.kp[2] * (gv.q[2] - gv.qd[2]) - gv.kv[2] * gv.dq[2] - gv.G[2]; 
 }
 
 void njtrackControl(GlobalVariables& gv) 
 {
-  
+
 	//maybe + gv.G[0] according to formular
 	//PrVector3 cur_qd = PrVector3(0,0,0);
 	//PrVector3 cur_dqd = PrVector3(0,0,0);
@@ -269,9 +356,7 @@ void njtrackControl(GlobalVariables& gv)
 		//double cur_dqd = spline.a1[0] * t_delta + 2 * spline.a2[0] * t_delta + spline.a3[0] * pow(t_delta, 2.0);
 		//gv.tau[0] = -gv.kp[0] * (gv.q[0] - gv.qd[0]) - gv.kv[0] * (gv.dq[0] - gv.dqd[0]) - gv.G[0];
   }*/
-
   //in the end switch to float control
-
   floatControl(gv);
 }
 
@@ -359,8 +444,7 @@ void PrintDebug(GlobalVariables& gv)
   //gv.A.display( "A" );
   //double t0 , tf;
   //double t_d = spline.tf - spline.t0; gv.dqmax[0], gv.ddqmax[0]size()
-  std::cout << spline.a0.size() << std::endl;
-
+  std::cout << splinesize() << std::endl;
 }
 
 #ifdef WIN32
